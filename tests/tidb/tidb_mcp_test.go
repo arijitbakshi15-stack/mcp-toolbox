@@ -72,6 +72,7 @@ func setupTiDBMCPServer(t *testing.T, ctx context.Context) (string, func()) {
 		cleanup()
 		teardownTable2(t)
 		teardownTable1(t)
+		pool.Close()
 	}
 }
 
