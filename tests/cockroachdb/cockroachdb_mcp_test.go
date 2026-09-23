@@ -31,8 +31,9 @@ import (
 
 // setupCockroachDBMCPServer starts a CockroachDB container, sets up the test
 // tables and starts a Toolbox server serving the CockroachDB tools over the MCP
-// endpoint.
-func setupCockroachDBMCPServer(t *testing.T, ctx context.Context) (string, func()) {
+// endpoint. Every teardown step is registered with t.Cleanup, so nothing leaks
+// if setup fails partway through.
+func setupCockroachDBMCPServer(t *testing.T, ctx context.Context) string {
 	tccockroachdbContainer, err := tccockroachdb.Run(ctx, "cockroachdb/cockroach:latest-v23.1",
 		testcontainers.WithCmd("start-single-node", "--insecure"),
 	)
@@ -75,10 +76,12 @@ func setupCockroachDBMCPServer(t *testing.T, ctx context.Context) (string, func(
 	// set up data for param tool (using CockroachDB explicit INT primary keys)
 	createParamTableStmt, insertParamTableStmt, paramToolStmt, idParamToolStmt, nameParamToolStmt, arrayToolStmt, paramTestParams := tests.GetCockroachDBParamToolInfo(tableNameParam)
 	teardownTable1 := tests.SetupPostgresSQLTable(t, ctx, pool, createParamTableStmt, insertParamTableStmt, tableNameParam, paramTestParams)
+	t.Cleanup(func() { teardownTable1(t) })
 
 	// set up data for auth tool
 	createAuthTableStmt, insertAuthTableStmt, authToolStmt, authTestParams := tests.GetCockroachDBAuthToolInfo(tableNameAuth)
 	teardownTable2 := tests.SetupPostgresSQLTable(t, ctx, pool, createAuthTableStmt, insertAuthTableStmt, tableNameAuth, authTestParams)
+	t.Cleanup(func() { teardownTable2(t) })
 
 	// Write config into a file and pass it to command
 	toolsFile := tests.GetToolsConfig(sourceConfig, CockroachDBToolType, paramToolStmt, idParamToolStmt, nameParamToolStmt, arrayToolStmt, authToolStmt)
@@ -93,6 +96,9 @@ func setupCockroachDBMCPServer(t *testing.T, ctx context.Context) (string, func(
 	if err != nil {
 		t.Fatalf("command initialization returned an error: %s", err)
 	}
+	// Registered last so it runs first, stopping the server before the tables
+	// it queries are dropped.
+	t.Cleanup(cleanup)
 
 	waitCtx, cancelWait := context.WithTimeout(ctx, 10*time.Second)
 	defer cancelWait()
@@ -102,19 +108,14 @@ func setupCockroachDBMCPServer(t *testing.T, ctx context.Context) (string, func(
 		t.Fatalf("toolbox didn't start successfully: %s", err)
 	}
 
-	return tableNameTemplateParam, func() {
-		cleanup()
-		teardownTable2(t)
-		teardownTable1(t)
-	}
+	return tableNameTemplateParam
 }
 
 func TestCockroachDBMCPListTools(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	_, teardown := setupCockroachDBMCPServer(t, ctx)
-	defer teardown()
+	setupCockroachDBMCPServer(t, ctx)
 
 	expectedTools := tests.GetBaseMCPExpectedTools()
 	expectedTools = append(expectedTools, tests.GetExecuteSQLMCPExpectedTools()...)
@@ -129,8 +130,7 @@ func TestCockroachDBMCPCallTool(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	tableNameTemplateParam, teardown := setupCockroachDBMCPServer(t, ctx)
-	defer teardown()
+	tableNameTemplateParam := setupCockroachDBMCPServer(t, ctx)
 
 	// Get configs for tests (use CockroachDB-specific expectations)
 	select1Want, mcpMyFailToolWant, createTableStatement, mcpSelect1Want := tests.GetCockroachDBWants()
