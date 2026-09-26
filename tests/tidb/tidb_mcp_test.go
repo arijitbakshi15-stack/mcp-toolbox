@@ -27,14 +27,18 @@ import (
 )
 
 // setupTiDBMCPServer sets up the test tables and starts a Toolbox server
-// serving the TiDB tools over the MCP endpoint.
-func setupTiDBMCPServer(t *testing.T, ctx context.Context) (string, func()) {
+// serving the TiDB tools over the MCP endpoint. Every teardown step is
+// registered with t.Cleanup, so nothing leaks if setup fails partway through.
+// Cleanups run LIFO, so the server stops before the tables it queries are
+// dropped, and the pool is closed last.
+func setupTiDBMCPServer(t *testing.T, ctx context.Context) string {
 	sourceConfig := getTiDBVars(t)
 
 	pool, err := initTiDBConnectionPool(TiDBHost, TiDBPort, TiDBUser, TiDBPass, TiDBDatabase, false)
 	if err != nil {
 		t.Fatalf("unable to create TiDB connection pool: %s", err)
 	}
+	t.Cleanup(func() { pool.Close() })
 
 	// create table name with UUID
 	tableNameParam := "param_table_" + strings.ReplaceAll(uuid.New().String(), "-", "")
@@ -44,10 +48,12 @@ func setupTiDBMCPServer(t *testing.T, ctx context.Context) (string, func()) {
 	// set up data for param tool
 	createParamTableStmt, insertParamTableStmt, paramToolStmt, idParamToolStmt, nameParamToolStmt, arrayToolStmt, paramTestParams := tests.GetMySQLParamToolInfo(tableNameParam)
 	teardownTable1 := tests.SetupMySQLTable(t, ctx, pool, createParamTableStmt, insertParamTableStmt, tableNameParam, paramTestParams)
+	t.Cleanup(func() { teardownTable1(t) })
 
 	// set up data for auth tool
 	createAuthTableStmt, insertAuthTableStmt, authToolStmt, authTestParams := tests.GetMySQLAuthToolInfo(tableNameAuth)
 	teardownTable2 := tests.SetupMySQLTable(t, ctx, pool, createAuthTableStmt, insertAuthTableStmt, tableNameAuth, authTestParams)
+	t.Cleanup(func() { teardownTable2(t) })
 
 	// Write config into a file and pass it to command
 	toolsFile := tests.GetToolsConfig(sourceConfig, TiDBToolType, paramToolStmt, idParamToolStmt, nameParamToolStmt, arrayToolStmt, authToolStmt)
@@ -59,6 +65,9 @@ func setupTiDBMCPServer(t *testing.T, ctx context.Context) (string, func()) {
 	if err != nil {
 		t.Fatalf("command initialization returned an error: %s", err)
 	}
+	// Registered last so it runs first, stopping the server before the tables
+	// it queries are dropped.
+	t.Cleanup(cleanup)
 
 	waitCtx, cancelWait := context.WithTimeout(ctx, 10*time.Second)
 	defer cancelWait()
@@ -68,20 +77,14 @@ func setupTiDBMCPServer(t *testing.T, ctx context.Context) (string, func()) {
 		t.Fatalf("toolbox didn't start successfully: %s", err)
 	}
 
-	return tableNameTemplateParam, func() {
-		cleanup()
-		teardownTable2(t)
-		teardownTable1(t)
-		pool.Close()
-	}
+	return tableNameTemplateParam
 }
 
 func TestTiDBMCPListTools(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*3)
 	defer cancel()
 
-	_, teardown := setupTiDBMCPServer(t, ctx)
-	defer teardown()
+	setupTiDBMCPServer(t, ctx)
 
 	expectedTools := tests.GetBaseMCPExpectedTools()
 	expectedTools = append(expectedTools, tests.GetExecuteSQLMCPExpectedTools()...)
@@ -96,8 +99,7 @@ func TestTiDBMCPCallTool(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*3)
 	defer cancel()
 
-	tableNameTemplateParam, teardown := setupTiDBMCPServer(t, ctx)
-	defer teardown()
+	tableNameTemplateParam := setupTiDBMCPServer(t, ctx)
 
 	select1Want, mcpMyFailToolWant, createTableStatement, mcpSelect1Want := getTiDBWants()
 
