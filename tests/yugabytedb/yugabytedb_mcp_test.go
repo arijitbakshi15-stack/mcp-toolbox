@@ -27,8 +27,11 @@ import (
 )
 
 // setupYugabyteDBMCPServer sets up the test tables and starts a Toolbox server
-// serving the YugabyteDB tools over the MCP endpoint.
-func setupYugabyteDBMCPServer(t *testing.T, ctx context.Context) (string, func()) {
+// serving the YugabyteDB tools over the MCP endpoint. Every teardown step is
+// registered with t.Cleanup, so nothing leaks if setup fails partway through.
+// Cleanups run LIFO, so the server stops before the tables it queries are
+// dropped.
+func setupYugabyteDBMCPServer(t *testing.T, ctx context.Context) string {
 	sourceConfig := getYBVars(t)
 
 	pool, err := initYBConnectionPool(YBDB_HOST, YBDB_PORT, YBDB_USER, YBDB_PASS, YBDB_DATABASE, YBDB_LB)
@@ -42,9 +45,11 @@ func setupYugabyteDBMCPServer(t *testing.T, ctx context.Context) (string, func()
 
 	createParamTableStmt, insertParamTableStmt, paramToolStmt, idParamToolStmt, nameParamToolStmt, arrayToolStmt, paramTestParams := tests.GetPostgresSQLParamToolInfo(tableNameParam)
 	teardownTable1 := SetupYugabyteDBSQLTable(t, ctx, pool, createParamTableStmt, insertParamTableStmt, tableNameParam, paramTestParams)
+	t.Cleanup(func() { teardownTable1(t) })
 
 	createAuthTableStmt, insertAuthTableStmt, authToolStmt, authTestParams := tests.GetPostgresSQLAuthToolInfo(tableNameAuth)
 	teardownTable2 := SetupYugabyteDBSQLTable(t, ctx, pool, createAuthTableStmt, insertAuthTableStmt, tableNameAuth, authTestParams)
+	t.Cleanup(func() { teardownTable2(t) })
 
 	toolsFile := tests.GetToolsConfig(sourceConfig, YBDB_TOOL_KIND, paramToolStmt, idParamToolStmt, nameParamToolStmt, arrayToolStmt, authToolStmt)
 	tmplSelectCombined, tmplSelectFilterCombined := tests.GetPostgresSQLTmplToolStatement()
@@ -54,6 +59,9 @@ func setupYugabyteDBMCPServer(t *testing.T, ctx context.Context) (string, func()
 	if err != nil {
 		t.Fatalf("command initialization returned an error: %s", err)
 	}
+	// Registered last so it runs first, stopping the server before the tables
+	// it queries are dropped.
+	t.Cleanup(cleanup)
 
 	waitCtx, cancelWait := context.WithTimeout(ctx, 10*time.Second)
 	defer cancelWait()
@@ -63,19 +71,14 @@ func setupYugabyteDBMCPServer(t *testing.T, ctx context.Context) (string, func()
 		t.Fatalf("toolbox didn't start successfully: %s", err)
 	}
 
-	return tableNameTemplateParam, func() {
-		cleanup()
-		teardownTable2(t)
-		teardownTable1(t)
-	}
+	return tableNameTemplateParam
 }
 
 func TestYugabyteDBMCPListTools(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	_, teardown := setupYugabyteDBMCPServer(t, ctx)
-	defer teardown()
+	setupYugabyteDBMCPServer(t, ctx)
 
 	expectedTools := tests.GetBaseMCPExpectedTools()
 	expectedTools = append(expectedTools, tests.GetTemplateParamMCPExpectedTools()...)
@@ -89,8 +92,7 @@ func TestYugabyteDBMCPCallTool(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	tableNameTemplateParam, teardown := setupYugabyteDBMCPServer(t, ctx)
-	defer teardown()
+	tableNameTemplateParam := setupYugabyteDBMCPServer(t, ctx)
 
 	select1Want, mcpMyFailToolWant, _, mcpSelect1Want := tests.GetPostgresWants()
 
