@@ -42,7 +42,9 @@ func setupCassandraMCPServer(t *testing.T, ctx context.Context) string {
 
 	paramTableName := "param_table_" + strings.ReplaceAll(uuid.New().String(), "-", "")
 	tableNameAuth := "auth_table_" + strings.ReplaceAll(uuid.New().String(), "-", "")
-	tableNameTemplateParam := "template_param_table_" + strings.ReplaceAll(uuid.New().String(), "-", "")
+	// Cassandra limits table names to 48 characters, so this prefix is shorter
+	// than the one the legacy test uses: 11 + 32 = 43 characters.
+	tableNameTemplateParam := "tmpl_param_" + strings.ReplaceAll(uuid.New().String(), "-", "")
 
 	if err = initTable(paramTableName, session); err != nil {
 		t.Fatal(err)
