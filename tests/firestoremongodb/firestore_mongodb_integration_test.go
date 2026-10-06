@@ -244,6 +244,12 @@ func runFirestoreMongodbGetSchemaTest(t *testing.T, collectionName string, opts 
 			if config.IsMCP() {
 				statusCode, mcpResp, err := tests.InvokeMCPTool(t, tc.toolName, tc.args, nil)
 				if err != nil {
+					// InvokeMCPTool only returns an error when a non-200
+					// response body could not be parsed as JSON-RPC, which is
+					// one of the shapes an expected failure can take.
+					if tc.isErr {
+						return
+					}
 					t.Fatalf("unable to send request: %s", err)
 				}
 				if statusCode != http.StatusOK {
@@ -365,6 +371,12 @@ func runFirestoreMongodbExecuteMQLTest(t *testing.T, collectionName string, opts
 			if config.IsMCP() {
 				statusCode, mcpResp, err := tests.InvokeMCPTool(t, tc.toolName, tc.args, nil)
 				if err != nil {
+					// InvokeMCPTool only returns an error when a non-200
+					// response body could not be parsed as JSON-RPC, which is
+					// one of the shapes an expected failure can take.
+					if tc.isErr {
+						return
+					}
 					t.Fatalf("unable to send request: %s", err)
 				}
 				if statusCode != http.StatusOK {
