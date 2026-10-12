@@ -120,7 +120,21 @@ func TestOracleMCPListTools(t *testing.T) {
 	setupOracleMCPServer(t, ctx)
 
 	expectedTools := tests.GetBaseMCPExpectedTools()
-	expectedTools = append(expectedTools, tests.GetExecuteSQLMCPExpectedTools()...)
+
+	// oracle-execute-sql documents its sql parameter as "The SQL to execute."
+	// rather than the shared helper's "The sql to execute.", and the manifest
+	// comparison is exact, so patch that one field.
+	execSQLTools := tests.GetExecuteSQLMCPExpectedTools()
+	for i := range execSQLTools {
+		execSQLTools[i].InputSchema = map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"sql": map[string]any{"type": "string", "description": "The SQL to execute."},
+			},
+			"required": []any{"sql"},
+		}
+	}
+	expectedTools = append(expectedTools, execSQLTools...)
 	expectedTools = append(expectedTools, tests.GetTemplateParamMCPExpectedTools()...)
 	expectedTools = append(expectedTools, tests.MCPToolManifest{
 		Name:        "my-update-tool",
