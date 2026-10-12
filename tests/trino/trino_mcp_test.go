@@ -92,7 +92,21 @@ func TestTrinoMCPListTools(t *testing.T) {
 	setupTrinoMCPServer(t, ctx)
 
 	expectedTools := tests.GetBaseMCPExpectedTools()
-	expectedTools = append(expectedTools, tests.GetExecuteSQLMCPExpectedTools()...)
+
+	// trino-execute-sql documents its sql parameter differently from the
+	// shared helper, and the manifest comparison is exact, so patch that one
+	// field rather than asserting the shared schema.
+	execSQLTools := tests.GetExecuteSQLMCPExpectedTools()
+	for i := range execSQLTools {
+		execSQLTools[i].InputSchema = map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"sql": map[string]any{"type": "string", "description": "The SQL query to execute against the Trino database."},
+			},
+			"required": []any{"sql"},
+		}
+	}
+	expectedTools = append(expectedTools, execSQLTools...)
 	expectedTools = append(expectedTools, tests.GetTemplateParamMCPExpectedTools()...)
 
 	t.Run("verify tools/list registry returns complete manifest", func(t *testing.T) {
