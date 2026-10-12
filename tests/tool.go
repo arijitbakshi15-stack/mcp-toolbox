@@ -4494,12 +4494,26 @@ func RunMSSQLListTablesTest(t *testing.T, tableNameParam, tableNameAuth string, 
 				if statusCode != tc.wantStatusCode {
 					t.Fatalf("response status code is not %d, got %d: %v", tc.wantStatusCode, statusCode, err)
 				}
+				if err != nil || mcpResp == nil {
+					t.Fatalf("unable to parse mcp response: %v", err)
+				}
+				// A tool error is reported as a 200 with isError set, so it has
+				// to be inspected rather than inferred from the status code.
+				if mcpResp.Error != nil || mcpResp.Result.IsError {
+					if tc.isAgentErr {
+						return
+					}
+					t.Fatalf("list_tables returned an error result: %+v", mcpResp.Result.Content)
+				}
 				if tc.isAgentErr {
 					return
 				}
 				gotObj := getMCPResultText(t, mcpResp)
 				if len(gotObj) == 0 {
-					resultString = "null"
+					// No matching tables is an empty array on /api, so keep
+					// that shape here. "null" would unmarshal to a nil slice
+					// and never deep-equal an empty want.
+					resultString = "[]"
 				} else {
 					gotBytes, _ := json.Marshal(gotObj)
 					resultString = string(gotBytes)
